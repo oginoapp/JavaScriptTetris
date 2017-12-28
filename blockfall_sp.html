@@ -1,0 +1,544 @@
+<!doctype html>
+
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+  <title>Tetris</title>
+  <style type="text/css">
+<!--
+@charset "UTF-8";
+
+body{
+  position: fixed;
+}
+
+.screen{
+  width:100%;
+  height:85vh;
+  border:solid 1px;
+}
+
+.window{
+  width:98%;
+  height:62%;
+  background-color:gray;
+  border:solid 1px;
+  margin:1% auto 0 auto;
+}
+
+.fullscreen{
+  width: 100%;
+  height: 100%;
+  margin: 0 auto 0 auto;
+}
+
+.largebtn{
+  width:100%;
+  height:9%;
+  margin-left:0;
+  margin-right:0;
+}
+
+.halfbtn{
+  width:49%;
+  height:9%;
+  margin-left:0;
+  margin-right:0;
+}
+
+.smallbtn{
+  width:32%;
+  height:10%;
+  margin-left:0;
+  margin-right:0;
+}
+
+-->
+  </style>
+</head>
+
+<body onload="" onSelectStart="return false;">
+  
+  <div class="screen">
+
+    <div class="window" id="window">
+    </div>
+    <input type="button" class="halfbtn" value="START" id="startbtn" onclick="start()"/>
+    <input type="button" class="halfbtn" value="STOP" id="stopbtn" onclick="stop()"/>
+    
+    <input type="button" class="smallbtn" value="左" id="testbtn" onmousedown="control('left')"/>
+    <input type="button" class="smallbtn" value="回転" id="testbtn" onmousedown="control('rotate')"/>
+    <input type="button" class="smallbtn" value="右" id="testbtn" onmousedown="control('right')"/>
+    
+    <input type="button" class="largebtn" value="早送り" id="testbtn" onmousedown="control('fast')" onmouseup="control('slow')"/>
+    <input type="button" class="largebtn" value="ブロック切り替え" id="testbtn" onmousedown="control('change')"/>
+  </div>
+
+  <script type="text/javascript">
+<!--
+
+var debug_mode = false;//デバッグモード
+var res_x = 20;//横の解像度
+var res_y = 20;//縦の解像度
+var interval_fast = 100;//落下の間隔
+var interval_slow = 1000;//落下の間隔
+var blockQuant = 3;//ブロック数
+
+var random;//ランダムエンジン
+var table;//テトリスのスクリーン
+var blocks = [];//ブロック配列
+var block;//選択中のブロック
+var currentIndex;//選択中のインデックス
+var interval;//現在の落下の間隔
+var flg;//進行
+var lock;//割り込み防止用
+var run;//開始してるかどうか
+
+/* 開始 */
+function start(){
+  if(run){
+    if(!flg){
+      alert("resume");
+      flg = true;
+    }
+    return;
+  }
+  
+  //初期化
+  random = new RandomEngine();
+  table = new Table(res_x,res_y);
+  table.init();
+
+  //ブロックたちの初期化
+  currentIndex = 0;
+  for(var i=0;i<blockQuant;i++){
+    blocks.push(new Block());
+    blocks[i].init();
+    table.replace(blocks[i],false);
+  }
+  block = blocks[currentIndex];
+  table.repaint();
+  
+  interval = interval_slow;
+  lock = false;
+  flg = true;
+  run = true;
+  
+  alert("START");
+}
+
+/* 停止 */
+function stop(){
+  if(!flg){
+    return;
+  }
+  flg = false;
+  alert("stop");
+}
+
+/* 毎秒呼び出される関数 */
+function sequence(){
+    if(!flg){
+      return;
+    }
+    while(lock);
+    lock = true;
+
+    for(var i=0;i<blockQuant;i++){
+      //ブロックの落下処理
+      blocks[i].fall();
+      if(!table.replace(blocks[i],false)){
+        //落下済みブロックと衝突した場合
+        blocks[i].die();
+        table.replace(blocks[i],true);
+
+        table.rowClear();
+
+        blocks[i] = new Block();
+        blocks[i].init();
+        if(!table.replace(blocks[i],false)){
+          table.replace(blocks[i],true);
+          flg = false;
+          run = false;
+          alert("GAME OVER");
+        }
+        //選択中のブロックだった場合
+        if(i == currentIndex){
+          if(currentIndex < blocks.length-1){
+            currentIndex++;
+          }else{
+            currentIndex = 0;
+          }
+        }
+      }
+    }
+    block = blocks[currentIndex];
+    table.repaint();
+    lock = false;
+}
+
+/* ブロック操作 */
+function control(arg){
+  if(!flg){
+    return;
+  }
+  while(lock);
+  lock = true;
+  if(arg == "rotate"){
+    block.rotate();
+  }else
+  if(arg == "left"){
+    block.left();
+  }else
+  if(arg == "right"){
+    block.right();
+  }else
+  if(arg == "fast"){
+    interval = interval_fast;
+  }else
+  if(arg == "slow"){
+    interval = interval_slow;
+  }else
+  if(arg == "change"){
+    if(currentIndex < blocks.length-1){
+      currentIndex++;
+    }else{
+      currentIndex = 0;
+    }
+    block = blocks[currentIndex];
+  }
+  table.replace(block,false);
+  table.repaint();
+  lock = false;
+}
+
+/**
+ * 説明:テトリスのスクリーン
+ * 生成:new Table(横,縦);table.init();
+ * 地形説明:
+ *  block.id = 自ブロック
+ *  0 = 空き地
+ *  -1 = 落下済みブロック
+ *  上記以外 = 他ブロック
+ * 依存関係:Block
+ */
+var Table = function(width,height){
+  this.x = width;//横解像度
+  this.y = height;//縦解像度
+  this.colors = [];//色配列
+  this.terrain = [];//地形
+  this.writable = "";//HTML
+  this.color = "#ddddff";//デフォルト色
+  this.td = "";//テスト用
+  this.border = 0;//テスト用
+  this.style = "";//選択中ブロックに適用
+
+  /* 色と地形の2次元配列の初期化 */
+  this.init = function(){
+    for(var i=0;i<this.y;i++){
+      var clr = [];
+      var trn = [];
+      for(var j=0;j<this.x;j++){
+        clr.push(this.color);
+        trn.push(0);
+      }
+      this.colors.push(clr);
+      this.terrain.push(trn);
+    }
+  }
+
+  /* スクリーンの再描画 */
+  this.repaint = function(){
+    this.writable = "";
+
+    if(debug_mode){
+      this.border = 1;
+    }
+    
+    this.writable += "<table border='"+this.border+"' cellspacing='0px' class='fullscreen'>";
+
+    for(var i=0;i<this.y;i++){
+      this.writable += "<tr>";
+      for(var j=0;j<this.x;j++){
+
+        if(debug_mode){
+          this.td = this.terrain[i][j];
+        }
+        if(this.terrain[i][j] == block.id){
+          this.style = "background-color:#ffff00";
+        }else{
+          this.style = "";
+        }
+
+        this.writable += "<td bgcolor='"+this.colors[i][j]+"' style='"+this.style+"'>"+this.td+"</td>";
+      }
+      this.writable += "</tr>";
+    }
+
+    this.writable += "</table>";
+    
+    //出力
+    document
+    .getElementById("window")
+    .innerHTML = this.writable;
+  }
+
+  /* ブロック情報をテーブルに反映 */
+  this.replace = function(block,force){
+    try{//エラー処理開始
+
+    //地形チェック
+    for(var i=0;i<block.nextForm.length;i++){
+      for(var j=0;j<block.nextForm[i].length;j++){
+        if(block.nextForm[i][j]==1 && this.terrain[i+block.nextPosY][j+block.nextPosX] != 0 && (this.terrain[i+block.nextPosY][j+block.nextPosX] != block.id && !force)){
+          if(this.terrain[i+block.nextPosY][j+block.nextPosX] == -1){
+            return false;
+          }else{
+            return true;
+          }
+        }
+      }
+    }
+
+    //古い位置の情報を削除
+    for(var i=0;i<block.form.length;i++){
+      for(var j=0;j<block.form[i].length;j++){
+        if(block.form[i][j]==1){
+          this.colors[i+block.posY][j+block.posX] = this.color;
+          this.terrain[i+block.posY][j+block.posX] = 0;
+        }
+      }
+    }
+
+    //新しい位置に配置
+    for(var i=0;i<block.nextForm.length;i++){
+      for(var j=0;j<block.nextForm[i].length;j++){
+        if(block.nextForm[i][j]==1){
+          this.colors[i+block.nextPosY][j+block.nextPosX] = block.color;
+          this.terrain[i+block.nextPosY][j+block.nextPosX] = block.id;
+        }
+      }
+    }
+
+    }catch(ex){//エラー処理終了
+      return false;
+    }
+    
+    block.commit();
+    return true;
+  }
+
+  /* 埋まった行を削除 */
+  this.rowClear = function(){
+    //縦スキャン
+    parent: for(var i=0;i<this.y;i++){
+      if(this.terrain[i][0] == -1){
+        //横スキャン
+        for(var j=0;j<this.x;j++){
+          if(this.terrain[i][j] != -1){
+            continue parent;
+          }
+        }
+
+        //1行削除
+        for(var k=i;k>=0;k--){
+          for(var l=0;l<this.x;l++){
+            if(this.terrain[k][l] == -1){
+              this.terrain[k][l] = 0;
+              this.colors[k][l] = this.color;
+            }
+            if(k > 0 && this.terrain[k-1][l] == -1){
+              this.terrain[k][l] = this.terrain[k-1][l];
+              this.colors[k][l] = this.colors[k-1][l];
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * 説明:ブロック
+ * 生成:new Block();block.init();
+ * 依存関係:RandomEngine
+ */
+var Block = function(){
+  this.id;
+  this.posX;
+  this.posY;
+  this.form;
+  this.color;
+  this.nextPosX = 5;
+  this.nextPosY = 0;
+  this.nextForm = [];
+
+  this.blockList = [];//3次元配列
+
+  //J
+  this.blockList[0]
+  =[
+   [[0,1],[0,1],[1,1]],
+   "#515111"
+   ];
+  //L
+  this.blockList[1]
+  =[
+   [[1,0],[1,0],[1,1]],
+   "#511151"
+   ];
+  //I
+  this.blockList[2]
+  =[
+   [[0,1,0],[0,1,0],[0,1,0],[0,1,0]],
+   "#115151"
+   ];
+  //T
+  this.blockList[3]
+  =[
+   [[1,1,1],[0,1,0]],
+   "#511111"
+   ];
+  //S
+  this.blockList[4]
+  =[
+   [[0,1,1],[1,1,0]],
+   "#115111"
+   ];
+  //Z
+  this.blockList[5]
+  =[
+   [[1,1,0],[0,1,1]],
+   "#111151"
+   ];
+  //O
+  this.blockList[6]
+  =[
+   [[1,1],[1,1]],
+   "#515151"
+   ];
+
+  /* 初期化 */
+  this.init = function(){
+    var currentBlock = this.blockList[random.nextInt(this.blockList.length,false)];
+    this.nextForm = currentBlock[0];
+    this.color = currentBlock[1];
+    this.nextPosX = random.nextInt(res_x-this.nextForm[0].length,false);
+    this.id=1+random.nextInt(blockQuant,true);
+    this.commit();
+  }
+
+  /* 回転 */
+  this.rotate = function(){
+    this.nextForm = [];
+    
+    for(var i=this.form[0].length-1;i>=0;i--){
+      var tmp = [];
+      for(var j=0;j<this.form.length;j++){
+        tmp.push(this.form[j][i]);
+      }
+      this.nextForm.push(tmp);
+    }
+    
+    this.nextPosY = this.posY;
+    this.nextPosX = this.posX;
+  }
+
+  /* 下 */
+  this.fall = function(){
+    this.nextPosY = this.posY + 1;
+    this.nextPosX = this.posX;
+    this.nextForm = this.form;
+  }
+
+  /* 左 */
+  this.left = function(){
+    this.nextPosY = this.posY;
+    this.nextPosX = this.posX - 1;
+    this.nextForm = this.form;
+  }
+
+  /* 右 */
+  this.right = function(){
+    this.nextPosY = this.posY;
+    this.nextPosX = this.posX + 1;
+    this.nextForm = this.form;
+  }
+
+  /* 位置と形を確定 */
+  this.commit = function(){
+    this.posX = this.nextPosX;
+    this.posY = this.nextPosY;
+    this.form = this.nextForm;
+  }
+  
+  /* 死亡 */
+  this.die = function(){
+    this.nextPosY = this.posY;
+    this.nextPosX = this.posX;
+    this.nextForm = this.form;
+    random.release(this.id-1);
+    this.id = -1;
+  }
+}
+
+/**
+ * 説明:ユニークな乱数を生成できるクラス
+ * 生成:new RandomEngine();
+ */
+var RandomEngine = function(){
+  this.list = [];
+  
+  /* 乱数を取得 */
+  this.nextInt = function(max,isUnique){
+    //0未満はユニーク化対象外
+    if(!isUnique || max<0){
+      return Math.floor(Math.random() * max);
+    }
+    
+    //ユニークな乱数を取得
+    var tmp = Math.floor(Math.random() * max);
+    var overlap = 0;
+    while(true){
+      tmp = Math.floor(Math.random() * max);
+      //重複チェック
+      for(var i=0;i<this.list.length;i++){
+        if(tmp == this.list[i]){
+          overlap++;
+        }
+      }
+      if(overlap == 0){
+        this.list.push(tmp);
+        return tmp;
+      }
+      if(this.list.length >= max){
+        return 0;
+      }
+      overlap = 0;
+    }
+  }
+  
+  /* 占拠中の値を解放 */
+  this.release = function(num){
+    for(var i=0;i<this.list.length;i++){
+      if(num == this.list[i]){
+        this.list.splice(i,1);
+      }
+    }
+  }
+}
+
+//-->
+
+  </script>
+  <script type="text/javascript">
+    function loop(){
+      sequence();
+      setTimeout("loop()",interval);
+    }
+    loop();
+  </script>
+</body>
+
+</html>
